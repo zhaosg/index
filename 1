@@ -1,0 +1,683 @@
+(function () {
+    var baseUrl = 'http://' + location.hostname + ':18080/hotel-service/static/';
+    document.write('<script type="text/javascript" src="' + baseUrl + 'head.load.min.js"></script>');
+    var _private = {
+        resource: [
+            baseUrl + "Zebra_Dialog-1.3.8/css/zebra_dialog.css",
+            baseUrl + "Zebra_Dialog-1.3.8/js/zebra_dialog.js",
+            baseUrl + "raty/js/jquery.raty.js",
+            baseUrl + "citySelector/citySelector-light.css",
+            baseUrl + "citySelector/citySelector.js",
+            baseUrl + "jquery.json.js",
+            baseUrl + "store.min.js",
+            baseUrl + "css/mappop.css",
+            baseUrl + "appjs/app-util.js",
+            baseUrl + "appjs/app-ws.js",
+            baseUrl + "appjs/app-cookie.js",
+            "http://api.map.baidu.com/getscript?v=2.0&ak=cGt7Huhkp1j3vlN8heVUiFvv&services=&t=" + (new Date().time),
+            "http://api.map.baidu.com/library/DistanceTool/1.2/src/DistanceTool_min.js",
+            "http://api.map.baidu.com/library/InfoBox/1.2/src/InfoBox_min.js"
+        ],
+        dic_name_code: {},
+        dic_code_name: {},
+        hotels: [],
+        filted_hotels: [],
+        dic_hotels: [],
+        dic_brand: {'尊茂': '尊茂', '辰茂': '辰茂', '之茂': '之茂', '茹仙古丽': '茹仙古丽', '5': '所有'},
+        dic_brand1: {'尊茂': '尊茂', '辰茂': '辰茂', '之茂': '之茂', '茹仙古丽': '茹仙古丽', '所有': '5'},
+        dic_prefs: {},
+        param: {},
+        asc: '1',
+        brand: 5,
+        el_btn_search: '.searchhotel a',
+        hotelsTpls: null,
+        code2Tpl: null,
+        code2Brand: null,
+        code2Lnglat: null,
+        code2Image: null,
+        code2Facility: null,
+        code2Name: null,
+        code2Address: null,
+        start: function () {
+            var me = this;
+            head.load(me.resource, function () {
+                setCookie("backHref", location.href, 30 * 1000 * 1000);
+                me.init();
+            });
+        },
+        init: function () {
+            var me = this;
+            me.initHandlers();
+            me.initQueryCtrl();
+            me.cacheHotelsTpls();
+            me.setViewMode();
+        },
+        getParam: function () {
+            var param = store.get('param');
+            if(param.arrival!=null){
+                var ss=param.arrival.split('-');
+                if(parseInt(ss.join(''))<parseInt(ns.util.date.today('yyyyMMdd'))){
+                    param.arrival=ns.util.date.today('yyyy-MM-dd');
+                    store.set("param",param);
+                }
+            }else{
+                param.arrival=ns.util.date.today('yyyy-MM-dd');
+            }
+            if(param.departure!=null){
+                var ss=param.departure.split('-');
+                if(parseInt(ss.join(''))<parseInt(ns.util.date.tomorrow('yyyyMMdd'))){
+                    param.departure=ns.util.date.tomorrow('yyyy-MM-dd');
+                    store.set("param",param);
+                }
+            }else{
+                param.departure=ns.util.date.tomorrow('yyyy-MM-dd');
+            }
+            return param;
+        },
+        initHandlers: function () {
+            var me = this;
+            ns.util.overrideParam();
+            var btnSearch = $(me.el_btn_search);
+            btnSearch.data('href', btnSearch.attr('href'));
+            btnSearch.attr('href', 'javascript:void(0)');
+            btnSearch.click(function () {
+                me.onSearch();
+            });
+            $('.adsearch').click(function () {
+                $('#tab_map').click();
+            });
+            $('#dropdown li').click(function (event) {
+                var newasc = $(this).text() == '由低到高' ? '1' : '0';
+                if (newasc != me.asc) {
+                    me.asc = newasc;
+                    me.listView.update(me);
+                }
+            });
+            $('#dropdown2 li').click(function (event) {
+                var newbrand = me.dic_brand1[$(this).text()];
+                if (newbrand != me.brand) {
+                    me.brand = newbrand;
+                    me.onSearch();
+                }
+            });
+            $('#key').keydown(function (e) {
+                if (e.keyCode == 13) {
+                    me.onSearch();
+                }
+            });
+        },
+        loadBaseData: function (callback) {
+            var me = this;
+            var param = me.getParam();
+            ns.ws.getCitys(function (result) {
+                var dic11 = [];
+                for (var i = 0; i < result.length; i++) {
+                    var city = result[i];
+                    dic11.push(city.name + '|' + city.code);
+                    me.dic_name_code[city.name.split("|")[0]] = city.code;
+                    me.dic_code_name[city.code] = city.name.split("|")[0];
+                }
+                new Vcity.CitySelector({
+                    input: 'homecity_name', citys: dic11, template: [
+                        '<p class="tip">城市(支持汉字/拼音)</p>',
+                        '<ul>',
+                        '   <li class="on">热门</li>',
+                        '   <li>全部</li>',
+                        '</ul>'
+                    ]
+                });
+                if (param && param.cityCode != null && param.cityCode != '')
+                    $('#homecity_name').val(me.dic_code_name[param.cityCode]);
+            });
+            if (callback != null) callback();
+        },
+        initQueryCtrl: function () {
+            var me = this;
+            var param = me.getParam();
+            if (param != null && parseInt(ns.util.date.today('yyyyMMdd')) > parseInt(param.arrival.replace(new RegExp('-', 'g'), ''))) {
+                store.set('param', null);
+            }
+            var ss = param.arrival.split('-');
+            $('#calendar').val(ss[0] + '年' + ss[1] + '月' + ss[2] + '日');
+            var ss = param.departure.split('-');
+            $('#calendarb').val(ss[0] + '年' + ss[1] + '月' + ss[2] + '日');
+            if (param && param.key != null && $.trim(param.key).length > 0){
+                $('#key').val(param.key);
+            }
+            if (param && param.brand != null && $.trim(param.brand).length > 0){
+                $('#dropdown2 p').text(me.dic_brand[param.brand]);
+                me.brand = param.brand;
+            }
+            ns.util.initPlaceholders({
+                "homecity_name": "希望到达的城市...",
+                "key": "输入关键字查找"
+            });
+        },
+        cacheHotelsTpls: function () {
+            var me = this;
+            var list = $('#list-view table tr');
+            $('#list-view').data("tpls", list);
+            var last;
+            var code2Tpl = {};
+            var code2Brand = {};
+            var code2Lnglat = {};
+            var code2AirportDistance = {};
+            var code2OverviewHref = {};
+            var code2RoomHref = {};
+            var code2Image = {};
+            var code2Facility = {};
+            var code2Name = {};
+            var code2Address = {};
+            for (var i = 0; i < list.length; i++) {
+                var tr_hotel = list.eq(i);
+                var tds = tr_hotel.find('td');
+                if (tds.length > 1) {//是酒店tr
+                    var code = tr_hotel.attr('id');
+                    code2Tpl[code] = tr_hotel;
+                    code2Brand[code] = tr_hotel.find('input[name="hotel_brand"]').val();
+                    code2Lnglat[code] = tr_hotel.find('input[name="hotel_lnglat"]').val();
+                    code2AirportDistance[code] = tr_hotel.find('input[name="hotel_airport_distance"]').val();
+                    //code2OverviewHref[code] = tr_hotel.find('input[name="hotel_overview_href"]').val();
+                    code2OverviewHref[code] = tr_hotel.find('.tdhoin ul').prev().find('a').attr('href');
+                    code2RoomHref[code] = tr_hotel.find('.ropr a').attr('href');
+                    code2Facility[code] = tr_hotel.find('.tdhoin ul');
+                    code2Name[code] = tr_hotel.find('h1').text();
+                    code2Address[code] = tr_hotel.find('h1').next().text();
+                    var src = tr_hotel.find('.picLsy li img').attr('src');
+                    if (src && src != '') {
+                        if (ns.util.isURL(src))
+                            code2Image[code] = src;
+                        else
+                            code2Image[code] = src;
+                    }
+                } else {
+                    last = tds.text();
+                }
+            }
+            me.hotelsTpls = list;
+            me.code2Tpl = code2Tpl;
+            me.code2Brand = code2Brand;
+            me.code2Lnglat = code2Lnglat;
+            me.code2AirportDistance = code2AirportDistance;
+            me.code2OverviewHref = code2OverviewHref;
+            me.code2RoomHref = code2RoomHref;
+            me.code2Image = code2Image;
+            me.code2Facility = code2Facility;
+            me.code2Name = code2Name;
+            me.code2Address = code2Address;
+            list.remove();
+            $('#list-view table').show();
+        },
+        showLoading: function () {
+            var me = this;
+            me.hideLoading();
+            var rnd = Math.random().toString().substring(2);
+            var position = $('#list-view').position();
+            var lll = position.left + $('#list-view').width() * 0.5 - 57;
+            //var ttt = position.top + $('#list-view').height() * 0.5;
+            var ttt = position.top + 10;
+            var tpl =
+                '<div id="lo_' + rnd + '" style="position:absolute;left:' + lll + 'px;top:' + ttt + 'px;width:114px;">' +
+                '    <span style="font-size: 12px;color: #777777 ">加载中...</span>' +
+                '    <br/>' +
+                '    <img src="' + baseUrl + 'icons/loading.gif">' +
+                '</div>';
+            $('#list-view').data("lo_id", 'lo_' + rnd);
+            $('#list-view').append(tpl);
+        },
+        hideLoading: function () {
+            $('#' + $('#list-view').data("lo_id")).remove();
+        },
+        setViewMode: function () {
+            var me = this;
+            $('#tab_list').click(function () {
+                $('#dropdown_price').show();
+            });
+            var param = me.getParam();
+            if (param && param.viewMode == 'map') {
+                $('#tab_list').removeClass("on");
+                $('#tab_map').addClass("on");
+                $('#list-view').hide();
+                $('#map-view').show();
+                me.mapView.initMap(function () {
+                    me.loadBaseData(function () {
+                        me.onSearch();
+                    });
+                });
+            } else {
+                me.loadBaseData(function () {
+                    me.onSearch();
+                });
+            }
+        },
+        onSearch: function () {
+            var me = this;
+            var param = {};
+            var arrival = $('#calendar').val();
+            if (arrival == null || $.trim(arrival).length == 0) {
+                ns.util.dlg.error('必须选择到达日期');
+                return;
+            }
+            param.arrival = arrival.replace('年', '-').replace('月', '-').replace('日', '');
+            var departure = $('#calendarb').val();
+            if (departure == null || $.trim(departure).length == 0) {
+                ns.util.dlg.error('必须选择离开日期');
+                return;
+            }
+            param.departure = departure.replace('年', '-').replace('月', '-').replace('日', '');
+            var cityName = $('#homecity_name').val();
+            if (cityName != null && cityName != '' && me.dic_name_code[cityName] != null)
+                param.cityCode = me.dic_name_code[cityName];
+            param.brand = me.brand;
+            var key = $('#key').val();
+            if (key != null && key.length > 0 && key != '输入关键字查找')
+                param.key = $.trim(key);
+            //跳转页面
+            store.set('param', param);
+            me.search();
+        },
+        search: function () {
+            var me = this;
+            me.showLoading();
+            ns.ws.getHotelList(me.getParam(), function (result) {
+                me.hideLoading();
+                if (result != null) {
+                    me.hotels = result.availability;
+                } else {
+                    me.hotels = [];
+                }
+                me.preProgress();
+                me.update();
+            });
+        },
+        preProgress: function () {
+            var me = this;
+            me.dic_hotels = {};
+            for (var i = 0; i < me.hotels.length; i++) {
+                me.hotels[i].seq = i + 1;
+                if(me.hotels[i].hotelInfo){
+                    me.hotels[i].code= me.hotels[i].hotelInfo.code;
+                    me.hotels[i].cityName= me.hotels[i].hotelInfo.province.name;
+                    me.hotels[i].minPrice=ns.util.computeMinPrice(me.hotels[i]);
+                    var code = me.hotels[i].code;
+                    me.dic_hotels[code] = me.hotels[i];
+                }
+            }
+        },
+        filter: function (param) {
+            var me = this;
+            var arr = [];
+            for (var i = 0; i < me.hotels.length; i++) {
+                var item = me.hotels[i];
+                if (me.hotels[i].hotelInfo &&
+                    (me.brand == null || me.brand == 5 || me.brand == me.code2Brand[item.code])
+                    && (param.key == null || param.key == '' || item.name.indexOf(param.key) != -1)
+                ) {
+                    var code=item.code;
+                    item.ucode=item.code.toUpperCase();
+                    item.hotelBrand = me.code2Brand[code];
+                    item.hotelLnglat = me.code2Lnglat[code];
+                    item.hotelAirportDistance = me.code2AirportDistance[code];
+                    item.hotelOverviewHref = me.code2OverviewHref[code];
+                    item.hotelImage = me.code2Image[code];
+                    if(me.code2Facility[code])
+                        item.hotelFacility = me.code2Facility[code].html();
+                    item.hotelName = me.code2Name[code];
+                    item.hotelAddress = me.code2Address[code];
+                    arr.push(item);
+                }
+            }
+            me.filted_hotels = arr;
+        },
+        ifnull: function (value) {
+            if (value == null)
+                return "&nbsp;";
+            else
+                return value;
+        },
+        update: function () {
+            var me = this;
+            var param = me.getParam();
+            if (param && param.brand != null && $.trim(param.brand).length > 0)
+                me.brand = param.brand;
+            me.filter(param);
+            me.mapView.update(me);
+            me.listView.update(me);
+        },
+        mapView: {
+            owner: null,
+            map: null,
+            mapInited: false,
+            mapLevel: 5,
+            distanceTool: null,
+            dic_marker: {},
+            tempInfoBox: null,
+            marker: null,
+            update: function (owner) {
+                var me = this;
+                if (owner != null)
+                    me.owner = owner;
+                if (me.mapInited) {
+                    me.map.clearOverlays();
+                    for (var i = 0; i < me.owner.filted_hotels.length; i++) {
+                        me.addMarker(me.owner.filted_hotels[i]);
+                    }
+                } else {
+                    $('#tab_map').click(function () {
+                        me.initMap(function () {
+                            for (var i = 0; i < me.owner.filted_hotels.length; i++) {
+                                me.addMarker(me.owner.filted_hotels[i]);
+                            }
+                        });
+                    });
+                }
+            },
+            initMap: function (callback) {
+                var me = this;
+                $('#dropdown_price').hide();
+                if (me.mapInited)
+                    return;
+                $('#map-view').css("height", '582px');
+                me.map = new BMap.Map("map-view");    // 创建Map实例
+                me.map.centerAndZoom(new BMap.Point(103.640067, 35.437934), me.mapLevel);  // 初始化地图,设置中心点坐标和地图级别
+                me.map.enableScrollWheelZoom(true);     //开启鼠标滚轮缩放
+                me.distanceTool = new BMapLib.DistanceTool(me.map);
+                var stCtrl = new BMap.PanoramaControl(); //构造全景控件
+                stCtrl.setOffset(new BMap.Size(20, 50));
+                //me.map.addControl(stCtrl);//添加全景控件
+                var mapType2 = new BMap.MapTypeControl({anchor: BMAP_ANCHOR_TOP_RIGHT});
+                //me.map.addControl(mapType2);          //2D图，卫星图
+                var top_left_navigation = new BMap.NavigationControl();  //左上角，添加默认缩放平移控件
+                me.map.addControl(top_left_navigation);
+                var overView = new BMap.OverviewMapControl();
+                var overViewOpen = new BMap.OverviewMapControl({isOpen: true, anchor: BMAP_ANCHOR_BOTTOM_RIGHT});
+                me.map.addControl(overView);          //添加默认缩略地图控件
+                me.map.addControl(overViewOpen);      //右下角，打开
+                me.map.addEventListener("tilesloaded", function () {
+                    if (!me.mapInited) {
+                        if (callback) callback();
+                        me.mapInited = true;
+                    }
+                });
+                me.map.addEventListener("zoomend", function () {
+                    me.updateMarkerLocation();
+                });
+            },
+            updateMarkerLocation: function () {
+                var me = this;
+                if (me.tempInfoBox != null) {
+                    var mp = me.map.pointToPixel(me.marker.point);
+                    mp.x = mp.x + 85 - 12;
+                    mp.y = mp.y - 12;
+                    mp = me.map.pixelToPoint(mp);
+                    me.tempInfoBox.setPosition(mp);
+                }
+            },
+            addMarker: function (item) {
+                var me = this;
+                var poi = item.hotelLnglat;
+                if (poi != null && poi != '' && poi != '') {
+                    var pois = poi.split(",");
+                    if (pois.length > 1) {
+                        var lng = pois[0];
+                        var lat = pois[1];
+                        var myIcon = new BMap.Icon(baseUrl+"images/mapadd.png", new BMap.Size(24, 24));
+                        var marker = new BMap.Marker(new BMap.Point(lng, lat), {icon: myIcon});
+                        marker.title = item.name;
+                        marker.addEventListener("click", function (event) {
+                            me.onMarkerClick(event);
+                        });
+                        marker.btype = 'hotel';
+                        marker.originData = item;
+                        me.map.addOverlay(marker);
+                        me.dic_marker[item.id] = marker;
+                    }
+                }
+            },
+            onMarkerClick: function (event) {
+                var me = this;
+                var marker = event.target;
+                if (me.tempInfoBox != null) {
+                    me.tempInfoBox.close();
+                }
+                if (marker.tempInfoBox != null) {
+                    marker.tempInfoBox.close();
+                } else {
+                    var item = marker.originData;
+                    var tpl =
+                        '<div id=pop-hotel-' + item.code + '" class="mappop">' +
+                        '	<a class="mahotel">' + item.hotelName + '</a>' +
+                        '	<div class="favourimg">' +
+                        '		<div class="picLsy" id="picLsy">' +
+                        '			<ul>' +
+                        '				<li>' +
+                        '					<a href="'+item.hotelOverviewHref+'">' +
+                        '						<img src="' + item.hotelImage + '" />' +
+                        '					</a>' +
+                        '				</li>' +
+                        '			</ul>' +
+                        '		</div>' +
+                        '	</div>' +
+                        '	<div class="hotelinfomap">' +
+                        '		<div class="hotelT">' +
+                        '			<p>' + me.owner.ifnull(item.hotelAddress) + '</p>' +
+                        '			<p><span>' + me.owner.ifnull(item.hotelAirportDistance) + '</span></p>' +
+                        '		</div>' +
+                        '		<ul>' +item.hotelFacility + '</ul>' +
+                        '	</div>' +
+                        '</div>';
+                    var infoBox = new BMapLib.InfoBox(me.map, tpl, {
+                        closeIconMargin: "1px 147px 0 0",
+                        closeIconUrl: baseUrl+'images/mapminus.png',
+                        enableAutoPan: true,
+                        align: INFOBOX_AT_BOTTOM
+                    });
+                    infoBox.addEventListener("close", function (e) {
+                        marker.tempInfoBox = null;
+                        me.tempInfoBox = null;
+                    });
+                    var mp = me.map.pointToPixel(marker.point);
+                    mp.x = mp.x + 85 - 12;
+                    mp.y = mp.y - 12;
+                    mp = me.map.pixelToPoint(mp);
+                    infoBox.open(mp);
+                    marker.tempInfoBox = infoBox;
+                    me.tempInfoBox = infoBox;
+                    me.marker = marker;
+                }
+            }
+        },
+        listView: {
+            owner: null,
+            sortByPrice: function () {
+                var me = this;
+                if (me.owner.filted_hotels == null || me.owner.filted_hotels.length == 0)
+                    return [];
+                function comparable(a, b) {
+                    var s1 = a.cityName.localeCompare(b.cityName);
+                    if (me.owner.asc == '1') {
+                        if (s1 == 0) {
+                            return a.minPrice - b.minPrice;
+                        } else {
+                            return s1;
+                        }
+                    } else {
+                        if (s1 == 0) {
+                            return b.minPrice - a.minPrice;
+                        } else {
+                            return s1;
+                        }
+                    }
+                }
+
+                return me.owner.filted_hotels.sort(comparable);
+            },
+            update: function (owner) {
+                var me = this;
+                if (owner != null) me.owner = owner;
+                $('#list-view table tbody').html('');
+                var hotels = me.sortByPrice();
+                var code2Tpl = me.owner.code2Tpl;
+                var last;
+                var box = $('#list-view table tbody');
+                if(hotels.length>0){
+                    box.html('');
+                    var lasttr;
+                    for (var i = 0; i < hotels.length; i++) {
+                        var code = hotels[i].code;
+                        var city =  hotels[i].cityName.split('|')[0];
+                        var tr_hotel = code2Tpl[hotels[i].code];
+                        if(tr_hotel==null)
+                            continue;
+                        if (last != city) {
+                            last = city;
+                            box.append('<tr><td colspan="3">' + city + '</td></tr>');
+                            if (lasttr)
+                                lasttr.addClass('trbo');
+                        }
+                        tr_hotel.removeClass('trbo');
+                        tr_hotel.find('.ropr span').text("￥ " + hotels[i].minPrice + " 起");
+                        tr_hotel.find('.tdhoin h1').next().next().hide();
+                        //tr_hotel.find('.tdhoin h1').next().next().replaceWith('<div name="star" style="cursor: default; width: 100px;"/>');
+                        box.append(tr_hotel);
+                        lasttr = tr_hotel;
+                        me.addEvent(tr_hotel, hotels[i]);
+                    }
+                    if(lasttr)
+                        lasttr.addClass('trbo');
+                }else{
+                    box.html('<tr class="trbo"><td width="'+$('#list-view .tab1').width()+'px">没有符合条件的结果</td></tr>');
+                }
+
+            },
+            addEvent: function ($tr, hotel) {
+                var me = this;
+                var li = $tr.find(' .picLsy ul li');
+                li.data('code', hotel.code);
+                li.data('href', hotel.hotelOverviewHref);
+                li.click(function () {
+                    store.set('hotel', hotel);
+                    ns.util.navigate($(this).data('href'), null);
+                });
+                li.hover(function () {
+                    $(this).find('.text:not(:animated)').animate({top: "0px"}, {easing: "easeInOutExpo"}, 50, function () {
+                    });
+                }, function () {
+                    $(this).find('.text').animate({top: "140px"}, {easing: "easeInOutExpo"}, 50, function () {
+                    });
+                });
+                var a_price=$tr.find('.ropr a').click();
+                a_price.data('href', a_price.attr('href'));
+                a_price.attr('href', 'javascript:void(0)');
+                a_price.click(function () {
+                    store.set('hotel', me.owner.dic_hotels[$(this).data('code')]);
+                    ns.util.navigate($(this).data('href'), null);
+                });
+                //$('#' + hotel.code + ' div[name="star"]').raty({
+                //    readOnly: true,
+                //    score: parseInt(hotel.stars),
+                //    size: 12,
+                //    path: baseUrl+'raty/img'
+                //});
+                //var a_more = $('#detail_more_' + hotel.code);
+                //a_more.data('href', a_more.attr('href'));
+                //a_more.attr('href', 'javascript:void(0)');
+                //a_more.data('code', hotel.code);
+                //a_more.click(function () {
+                //    store.set('hotel', me.owner.dic_hotels[$(this).data('code')]);
+                //    ns.util.navigate($(this).data('href'), null);
+                //});
+            },
+            addEvent_Bak: function (owner, item) {
+                if (item == null)
+                    return;
+                var me = this;
+                var hotel = item.availability;
+                var priceInfo = me.owner.parsePrice(item);
+
+                function tranBitText(text, len, suffix) {
+                    if (text == null)
+                        return "&nbsp;";
+                    else {
+                        return text.substr(0, len) + suffix;
+                    }
+                }
+
+                var tpl =
+                    '<tr id="tr_' + hotel.code + '">' +
+                    '    <td width="146">' +
+                    '        <div class="picLsy">' +
+                    '            <ul>' +
+                    '                <li><img src="' + item.hotelImage + '"/>' +
+                    '                    <div class="text"><a href="#">查看详情</a></div>' +
+                    '                </li>' +
+                    '            </ul>' +
+                    '        </div>' +
+                    '    </td>' +
+                    '    <td width="350">' +
+                    '        <div class="tdhoin">' +
+                    '            <h1>' + me.owner.ifnull(item.hotelName) + '</h1>' +
+                    '            <p>' + me.owner.ifnull(item.hotelAddress) + '</p>' +
+                    '            <div name="star" style="cursor: default; width: 100px;display: none"/>' +
+                    '            <h2>' + me.owner.ifnull(item.hotelLocation) + '</h2>' +
+                    '            <p>' + tranBitText(item.hotelDetail, 45, '...<a id="detail_more_' + hotel.code + '" href="' + item.hotelPath + '/shotelindex.html#book">更多详情&gt;&gt;&gt;</a>') + '</p>' +
+                    '            <ul>' + me.owner.getPrefs(item) + '</ul>' +
+                    '        </div>' +
+                    '    </td>' +
+                    '    <td width="197">' +
+                    '        <div class="ropr">' +
+                    '            <img src="' + me.owner.dic_brand_logo[item.hotelBrand] + '"/>' +
+                    '            ￥ ' + priceInfo.price + ' 起' +
+                    '            <a id="price_more_' + hotel.code + '"  href="' + item.hotelPath + '/sroom.html#book">查看房价</a>' +
+                    '        </div>' +
+                    '    </td>' +
+                    '</tr>';
+                owner.append(tpl);
+                $('#tr_' + hotel.code + ' div[name="star"]').raty({
+                    readOnly: true,
+                    score: parseInt(hotel.stars),
+                    size: 12,
+                    path: 'appjs/plugins/raty/img'
+                });
+                var a_more = $('#detail_more_' + hotel.code);
+                a_more.data('href', a_more.attr('href'));
+                a_more.attr('href', 'javascript:void(0)');
+                a_more.data('code', hotel.code);
+                a_more.click(function () {
+                    store.set('hotel', me.owner.dic_hotels[$(this).data('code')]);
+                    ns.util.navigate($(this).data('href'), null);
+                });
+                var a_price_more = $('#price_more_' + hotel.code);
+                a_price_more.data('href', a_price_more.attr('href'));
+                a_price_more.attr('href', 'javascript:void(0)');
+                a_price_more.data('code', hotel.code);
+                a_price_more.click(function () {
+                    store.set('hotel', me.owner.dic_hotels[$(this).data('code')]);
+                    ns.util.navigate($(this).data('href'), null);
+                });
+                var li = $('#tr_' + hotel.code + ' .picLsy ul li');
+                li.data('code', hotel.code);
+                li.data('href', a_more.data('href'));
+                li.click(function () {
+                    store.set('hotel', me.owner.dic_hotels[$(this).data('code')]);
+                    ns.util.navigate($(this).data('href'), null);
+                });
+                li.hover(function () {
+                    $(this).find('.text:not(:animated)').animate({top: "0px"}, {easing: "easeInOutExpo"}, 50, function () {
+                    });
+                }, function () {
+                    $(this).find('.text').animate({top: "140px"}, {easing: "easeInOutExpo"}, 50, function () {
+                    });
+                });
+            }
+        }
+    };
+    var _public = {
+        start: function () {
+            _private.start()
+        }
+    };
+    $(function () {
+        _public.start();
+    });
+}());
